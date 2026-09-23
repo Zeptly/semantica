@@ -1,0 +1,5 @@
+# Development / test tooling (not installed in the production image).
+pytest==8.4.2
+httpx==0.28.1
+ruff==0.13.3
+mypy==1.18.2
