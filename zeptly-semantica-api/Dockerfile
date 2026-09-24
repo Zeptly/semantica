@@ -24,11 +24,7 @@ COPY requirements.lock /tmp/requirements.lock
 # --no-deps: the lock is the complete closure; semantica's declared ML
 #   dependencies are intentionally excluded (see scripts/lock.sh).
 # --only-binary: wheels only, so no compiler toolchain is needed.
-# Optional build secret "build_ca": an extra CA bundle for builds behind a
-# TLS-intercepting proxy. Never written to any image layer; absent on Railway.
-RUN --mount=type=secret,id=build_ca,required=false \
-    if [ -s /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi \
- && pip install --no-deps --require-hashes --only-binary=:all: -r /tmp/requirements.lock \
+RUN pip install --no-deps --require-hashes --only-binary=:all: -r /tmp/requirements.lock \
  && python -c "import importlib.metadata as m; assert m.version('semantica') == '0.6.0'" \
  && python -c "from semantica.graph_store import GraphStore; import falkordb, fastapi, uvicorn" \
  && python -m pip uninstall --yes --quiet pip \

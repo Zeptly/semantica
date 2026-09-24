@@ -151,8 +151,7 @@ docker compose up -d    # semantica-api on 127.0.0.1:8080, FalkorDB on the compo
 
 The image is multi-stage and based on `python:3.12-slim`, pinned by digest. pip, setuptools, the `fastapi` CLI and semantica's console scripts are removed from the runtime image. It installs only hash-verified wheels (no compilers) into `/opt/venv`, owned by root. It runs as uid `10001` and starts with `python -m app`. Nothing needs to be written at runtime, so it runs with `--read-only` (compose sets `read_only: true`, `cap_drop: ALL`, `no-new-privileges`). No secrets are baked in.
 
-To build behind a TLS-intercepting proxy, pass that proxy's CA as a BuildKit secret. The CA is never written to a layer:
-`docker build --secret id=build_ca,src=/path/to/ca.pem -t zeptly-semantica-api:local .`
+The Dockerfile uses no BuildKit secret or other mounts, because Railway's builder rejects `--mount=type=secret`. To build locally behind a TLS-intercepting proxy, run `VERIFY_BUILD_CA=/path/to/ca.pem scripts/verify_stack.sh`. It builds from a throwaway copy of the Dockerfile that trusts the extra CA through a secret mount, so the CA never enters the repository or an image layer.
 
 `docker-compose.yml` is for local validation only.
 

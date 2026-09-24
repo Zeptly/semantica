@@ -442,3 +442,11 @@ def test_bind_host_is_dual_stack_or_ipv4_fallback():
 def test_graph_module_labels_are_constants():
     assert graph_module.NODE_LABEL == "SemanticaNode"
     assert graph_module.EDGE_TYPE == "SEMANTIC_EDGE"
+
+
+def test_dockerfile_is_railway_buildable():
+    """Railway's builder only accepts type=cache mounts and rejects
+    --mount=type=secret outright, so the committed Dockerfile uses none."""
+    dockerfile = (APP_DIR.parent / "Dockerfile").read_text()
+    assert "--mount" not in dockerfile
+    assert "PIP_CERT" not in dockerfile

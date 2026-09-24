@@ -35,7 +35,7 @@ The service holds a **derived projection** of canonical Zeptly PostgreSQL state 
 
 * Secrets come only from environment variables: `SEMANTICA_API_KEY` and `FALKORDB_PASSWORD`. They are never in the image, `railway.toml`, compose defaults for production, or the repository. `.env` is git-ignored, and `.env.example` holds placeholders only.
 * `Settings.__repr__` redacts both secrets. Logs are JSON lines. Startup records only whether each secret is set. Graph failures record the operation name and exception type, never query text or parameters. Authentication failures record the reason, route template and a running count, never key material. Request bodies and headers are never logged. The Phase 6.25B stack check greps the container logs for both secrets and for payload markers.
-* Builds behind a TLS-intercepting proxy pass the CA as a BuildKit secret mount, which is never written to a layer.
+* The committed Dockerfile has no build-time secrets or mounts. For local builds behind a TLS-intercepting proxy only, `scripts/verify_stack.sh` builds from a throwaway Dockerfile copy that passes the proxy CA as a BuildKit secret mount, which is never written to a layer.
 
 ## Workspace isolation
 

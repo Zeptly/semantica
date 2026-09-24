@@ -50,9 +50,20 @@ cleanup() {
 trap cleanup EXIT
 
 build_image() {
-  local args=()
-  [[ -n "${VERIFY_BUILD_CA:-}" ]] && args+=(--secret "id=build_ca,src=${VERIFY_BUILD_CA}")
-  docker build -q "${args[@]}" "$@" -t "$IMAGE" . >/dev/null
+  if [[ -z "${VERIFY_BUILD_CA:-}" ]]; then
+    docker build -q "$@" -t "$IMAGE" . >/dev/null
+    return
+  fi
+  # Behind a TLS-intercepting proxy only: build from a throwaway copy of the
+  # Dockerfile whose pip step trusts the extra CA via a BuildKit secret mount.
+  # The committed Dockerfile stays plain because Railway's builder rejects
+  # secret mounts; the CA never enters an image layer either way.
+  local df
+  df="$(mktemp)"
+  sed 's|^RUN pip install --no-deps|RUN --mount=type=secret,id=build_ca PIP_CERT=/run/secrets/build_ca pip install --no-deps|' Dockerfile > "$df"
+  grep -q 'id=build_ca' "$df" || { rm -f "$df"; fail "could not inject build CA into Dockerfile copy"; }
+  docker build -q -f "$df" --secret "id=build_ca,src=${VERIFY_BUILD_CA}" "$@" -t "$IMAGE" . >/dev/null
+  rm -f "$df"
 }
 
 # call METHOD PATH [JSON] -> sets $STATUS and $BODY (authenticated)
