@@ -1,14 +1,27 @@
-# Railway config-as-code for the zeptly-semantica-api service.
-# Service settings: Root Directory = zeptly-semantica-api.
-# FalkorDB is a separate Railway service (image falkordb/falkordb-server:v4.14.8
-# with a volume at /var/lib/falkordb/data); see README.md "Railway deployment".
-# No secrets here: SEMANTICA_API_KEY / FALKORDB_PASSWORD are Railway variables.
+# Railway config-as-code for the semantica-api service.
+#
+# Service settings that are NOT read from this file (set them in the dashboard,
+# see RAILWAY-DEPLOYMENT-GUIDE.md):
+#   * Source → Root Directory:      /zeptly-semantica-api
+#   * Config-as-code → Config Path:  /zeptly-semantica-api/railway.toml
+#     (Railway does not look for this file under the Root Directory by itself;
+#     the path must be given absolute from the repository root.)
+#   * Variables (SEMANTICA_API_KEY, FALKORDB_PASSWORD, ...): never in this file.
+#
+# FalkorDB is a separate Railway service (image
+# falkordb/falkordb-server:v4.14.8, volume at /var/lib/falkordb/data,
+# no public networking).
 
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+# The Dockerfile is found at the root of the service's Root Directory; no
+# dockerfilePath is set so it cannot be resolved against the wrong base.
+# Only redeploy when this service's files change (paths from repo root).
+watchPatterns = ["/zeptly-semantica-api/**"]
 
 [deploy]
+# Deploy-time healthcheck: the new deployment must answer 200 on /health
+# (liveness, no auth, no FalkorDB dependency) before traffic moves to it.
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"

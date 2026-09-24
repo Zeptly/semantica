@@ -4,7 +4,8 @@ name: zeptly-semantica
 
 services:
   falkordb:
-    image: falkordb/falkordb-server:v4.14.8
+    # Pinned by tag and digest (FalkorDB v4.14.8, server-only image: no browser UI).
+    image: falkordb/falkordb-server:v4.14.8@sha256:71afd8c7cc44c15caab5fb35343d46bb0dc6ce3ee80a33f599f5d6647cdb50c4
     environment:
       # AOF + RDB persistence and a password, mirroring the Railway posture.
       REDIS_ARGS: >-

@@ -43,7 +43,7 @@ It uses a single FalkorDB graph (`FALKORDB_GRAPH`, default `zeptly_semantica`):
 
 ## API
 
-Every `/v1/...` route requires the `X-API-Key` header. Identifiers (`workspace_id`, node and edge IDs) must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+Every `/v1/...` route requires exactly one `X-API-Key` header. Duplicate headers are rejected. Identifiers (`workspace_id`, node and edge IDs) must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -116,10 +116,10 @@ The response contains the anchor node, a list of `{direction, edge, neighbor}` e
 | `SEMANTICA_ALLOW_ANONYMOUS` | no | `false` | `true` is accepted only in `development` or `test`. In any other environment the process refuses to start. |
 | `FALKORDB_HOST` | no | `localhost` | On Railway, use the FalkorDB service's private domain. |
 | `FALKORDB_PORT` | no | `6379` | |
-| `FALKORDB_PASSWORD` | no | none | Set it whenever FalkorDB runs with `--requirepass` (recommended). |
+| `FALKORDB_PASSWORD` | yes in production/staging | none | Must match FalkorDB's `--requirepass`. The service refuses to start without it in production or staging, because `falkordb-server` runs with protected-mode off. |
 | `FALKORDB_GRAPH` | no | `zeptly_semantica` | Graph name. Letters, digits and `_` only. |
 | `FALKORDB_TIMEOUT_SECONDS` | no | `5` | Socket connect and read timeout for graph calls. |
-| `PORT` | no | `8080` | Railway injects this value. The server always binds `0.0.0.0:${PORT}`. |
+| `PORT` | no | `8080` | Railway injects this value. The server binds `[::]:${PORT}` (dual-stack IPv6 + IPv4, as Railway private networking needs) and falls back to `0.0.0.0` when IPv6 is unavailable. |
 
 If configuration is invalid or unsafe, the process logs the reason and exits with code 2.
 
@@ -149,7 +149,7 @@ cp .env.example .env    # then edit the values
 docker compose up -d    # semantica-api on 127.0.0.1:8080, FalkorDB on the compose network only
 ```
 
-The image is multi-stage and based on `python:3.12-slim`. It installs only hash-verified wheels (no compilers) into `/opt/venv`, owned by root. It runs as uid `10001` and starts with `python -m app`. Nothing needs to be written at runtime, so it runs with `--read-only` (compose sets `read_only: true`, `cap_drop: ALL`, `no-new-privileges`). No secrets are baked in.
+The image is multi-stage and based on `python:3.12-slim`, pinned by digest. pip, setuptools, the `fastapi` CLI and semantica's console scripts are removed from the runtime image. It installs only hash-verified wheels (no compilers) into `/opt/venv`, owned by root. It runs as uid `10001` and starts with `python -m app`. Nothing needs to be written at runtime, so it runs with `--read-only` (compose sets `read_only: true`, `cap_drop: ALL`, `no-new-privileges`). No secrets are baked in.
 
 To build behind a TLS-intercepting proxy, pass that proxy's CA as a BuildKit secret. The CA is never written to a layer:
 `docker build --secret id=build_ca,src=/path/to/ca.pem -t zeptly-semantica-api:local .`
@@ -166,12 +166,31 @@ ruff check app tests && ruff format --check app tests && mypy
 
 # full stack: build, fixtures for Workspace A and B, API restart, FalkorDB restart,
 # SIGKILL/AOF recovery, outage and readiness, compose down/up with the volume retained
-scripts/verify_stack.sh                  # VERIFY_SKIP_BUILD=1 reuses zeptly-semantica-api:local
+scripts/verify_stack.sh   # VERIFY_BUILD_CA=/path/ca.pem behind a TLS-intercepting proxy
 ```
 
 Integration tests write to a throwaway graph (`test_<random>`) and delete it at the end of the session.
 
-## Railway deployment (intent — Phase 6.25B, not performed here)
+## Observability
+
+Logs are JSON lines on stdout. Railway parses the `level` and `message` fields. Events:
+
+| Event | When |
+|---|---|
+| `startup` | Once at boot. Records the semantica version, env, `auth_required` and `anonymous_allowed`, and whether the FalkorDB password is set. It never includes the password itself. |
+| `bind` | Once at boot. Records the host and port the server listens on. |
+| `readiness` | Once at boot, after the first FalkorDB check. |
+| `graph_connected` | Whenever connectivity to FalkorDB is established or restored. |
+| `graph_unavailable` | Whenever connectivity to FalkorDB is lost. |
+| `auth_rejected` | Every rejected request. Records the reason (`missing`, `invalid` or `ambiguous`), the route template and a running total. It never includes key material. |
+| `graph_operation_failed` | A write or query failure. Records the operation name and exception type, never query parameters. |
+| `config_rejected` | Startup refused because of unsafe configuration. |
+
+Request bodies and headers are never logged.
+
+## Railway deployment
+
+See [RAILWAY-DEPLOYMENT-GUIDE.md](RAILWAY-DEPLOYMENT-GUIDE.md) for step-by-step dashboard instructions. The summary below is kept for reference.
 
 Two native Railway services in one project:
 
@@ -191,5 +210,5 @@ The deployment healthcheck is `/health`, which does not depend on FalkorDB. Use 
 
 * **Semantica is pinned to exactly `0.6.0`**, with a sha256 hash, in `requirements.lock`. `app.main` refuses to start if the installed version is anything else.
 * semantica 0.6.0's package metadata declares the full ML and NLP stack (torch, transformers, spacy, faiss, opencv, and more). `semantica.graph_store` imports none of it. The FalkorDB backend needs only the `falkordb` client. The lock therefore holds the exact runtime closure, and it is installed with `pip install --no-deps --require-hashes`. This keeps the image small (about 60 MB compressed) and avoids shipping unused LLM and embedding code. The image build verifies the pin and the `GraphStore` import.
-* The FalkorDB server image is pinned to `v4.14.8`, and all Python dependencies are pinned with hashes. To regenerate the lock, run `scripts/lock.sh`, which needs `uv` and `pip`.
+* The FalkorDB server image is pinned to `v4.14.8@sha256:71afd8c7…`, and the Python base image is pinned by digest. All Python dependencies are pinned with hashes. To regenerate the lock, run `scripts/lock.sh`, which needs `uv` and `pip`.
 * **One narrow capability gap in Semantica 0.6.0:** `FalkorDBStore.connect()` does not forward socket timeouts. `app/graph.py` builds the `falkordb` client with bounded timeouts and passes it to Semantica's own `FalkorDBClient` wrapper. Every query still runs through `GraphStore.execute_query`. Revisit this if the Semantica pin changes.

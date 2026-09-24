@@ -18,8 +18,11 @@ def _closed_port() -> int:
     return port
 
 
-def test_health_is_unauthenticated_and_minimal(anon_client):
-    r = anon_client.get("/health")
+def test_health_is_unauthenticated_minimal_and_graph_independent():
+    """Liveness must not depend on FalkorDB or on authentication."""
+    settings = make_settings(FALKORDB_HOST="127.0.0.1", FALKORDB_PORT=str(_closed_port()))
+    with TestClient(create_app(settings, ProjectionGraph(settings))) as c:
+        r = c.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
@@ -56,7 +59,9 @@ def test_graph_store_outage_is_not_ready():
 
 
 def test_docs_disabled_outside_development():
-    settings = make_settings(SEMANTICA_ENV="production", FALKORDB_PORT=str(_closed_port()))
+    settings = make_settings(
+        SEMANTICA_ENV="production", FALKORDB_PORT=str(_closed_port()), FALKORDB_PASSWORD="pw"
+    )
     with TestClient(create_app(settings, ProjectionGraph(settings))) as c:
         assert c.get("/docs").status_code == 404
         assert c.get("/openapi.json").status_code == 404

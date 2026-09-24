@@ -206,6 +206,7 @@ class ProjectionGraph:
         self._settings = settings
         self._lock = threading.Lock()
         self._schema_ready = False
+        self._available: Optional[bool] = None  # last observed connectivity
 
         self._store = GraphStore(
             backend="falkordb",
@@ -257,20 +258,58 @@ class ProjectionGraph:
             if backend._client is None:
                 self._connect_locked()
 
-    def _run(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[List[Any]]:
-        self._ensure_connected()
+    def _mark_available(self, available: bool, exc: Optional[BaseException] = None) -> None:
+        """Log connectivity transitions once, not on every failed request."""
+        if self._available == available:
+            return
+        self._available = available
+        if available:
+            logger.info("graph store connected", extra={"event": "graph_connected"})
+        else:
+            root = exc
+            while root is not None and (root.__cause__ or root.__context__):
+                root = root.__cause__ or root.__context__
+            logger.error(
+                "graph store unreachable",
+                extra={
+                    "event": "graph_unavailable",
+                    "error_type": type(root).__name__ if root else None,
+                    "host": self._settings.falkordb_host,
+                    "port": self._settings.falkordb_port,
+                },
+            )
+
+    def _run(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        operation: str = "query",
+        quiet: bool = False,
+    ) -> List[List[Any]]:
         try:
+            self._ensure_connected()
             result = self._store.execute_query(query, params or {})
+        except GraphUnavailable as exc:
+            self._mark_available(False, exc)
+            raise
         except Exception as exc:  # noqa: BLE001 - classify below
             if _is_connection_failure(exc):
+                self._mark_available(False, exc)
                 raise GraphUnavailable("graph store unreachable") from exc
-            # Log the failing template's first line only - never parameters.
-            logger.error(
-                "graph query failed: %s (%s)",
-                query.strip().splitlines()[0],
-                type(exc).__name__,
-            )
+            if not quiet:
+                # Operation name and exception type only: driver messages can
+                # embed query text and parameter values.
+                logger.error(
+                    "graph operation failed",
+                    extra={
+                        "event": "graph_operation_failed",
+                        "operation": operation,
+                        "error_type": type(exc).__name__,
+                    },
+                )
             raise GraphError("graph operation failed") from exc
+        self._mark_available(True)
         return result.get("records", [])
 
     def close(self) -> None:
@@ -279,7 +318,7 @@ class ProjectionGraph:
     # -- readiness / schema ----------------------------------------------
 
     def ping(self) -> bool:
-        rows = self._run(_Q_PING)
+        rows = self._run(_Q_PING, operation="ping")
         return bool(rows) and rows[0][0] == 1
 
     def ensure_schema(self) -> None:
@@ -288,9 +327,13 @@ class ProjectionGraph:
             return
         for statement in _Q_INDEXES:
             try:
-                self._run(statement)
+                self._run(statement, operation="create_index", quiet=True)
             except GraphError as exc:
                 if "already indexed" not in str(exc.__cause__ or ""):
+                    logger.error(
+                        "graph index creation failed",
+                        extra={"event": "graph_operation_failed", "operation": "create_index"},
+                    )
                     raise
         self._schema_ready = True
 
@@ -315,23 +358,25 @@ class ProjectionGraph:
         rows = self._run(
             _Q_UPSERT_NODE,
             {"key": key, "ws": workspace_id, "props": stored, "now": _now()},
+            operation="upsert_node",
         )
         if not rows:
             # Only possible if a node with this key exists under a different
             # workspace_id, i.e. the projection is corrupt. Refuse to touch it.
+            logger.error("workspace scope conflict", extra={"event": "scope_conflict"})
             raise GraphError("workspace scope conflict")
         return _public(rows[0][0]), bool(rows[0][1])
 
     def get_node(self, workspace_id: str, canonical_id: str) -> Optional[Dict[str, Any]]:
         key = scoped_key(workspace_id, canonical_id)
-        rows = self._run(_Q_GET_NODE, {"key": key, "ws": workspace_id})
+        rows = self._run(_Q_GET_NODE, {"key": key, "ws": workspace_id}, operation="get_node")
         return _public(rows[0][0]) if rows else None
 
     def delete_node(self, workspace_id: str, canonical_id: str) -> Optional[int]:
         """Delete a node and every projection edge attached to it.
         Returns the number of detached edges, or None if the node was absent."""
         key = scoped_key(workspace_id, canonical_id)
-        rows = self._run(_Q_DELETE_NODE, {"key": key, "ws": workspace_id})
+        rows = self._run(_Q_DELETE_NODE, {"key": key, "ws": workspace_id}, operation="delete_node")
         return int(rows[0][0]) if rows else None
 
     # -- edges -----------------------------------------------------------
@@ -364,6 +409,7 @@ class ProjectionGraph:
                 "props": stored,
                 "now": _now(),
             },
+            operation="upsert_edge",
         )
         if not rows:
             raise EndpointNotFound("source or target node not found in workspace")
@@ -371,7 +417,7 @@ class ProjectionGraph:
 
     def delete_edge(self, workspace_id: str, edge_id: str) -> bool:
         key = scoped_key(workspace_id, edge_id)
-        rows = self._run(_Q_DELETE_EDGE, {"key": key, "ws": workspace_id})
+        rows = self._run(_Q_DELETE_EDGE, {"key": key, "ws": workspace_id}, operation="delete_edge")
         return bool(rows) and int(rows[0][0]) > 0
 
     # -- relationship query ----------------------------------------------
@@ -398,6 +444,7 @@ class ProjectionGraph:
                 "include_non_current": include_non_current,
                 "limit": int(limit) + 1,  # one extra row detects truncation
             },
+            operation="query_relationships",
         )
         truncated = len(rows) > limit
         out = [

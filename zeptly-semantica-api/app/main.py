@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .auth import AuthFailureCounter
 from .config import Settings
 from .graph import GraphError, GraphUnavailable, ProjectionGraph
 from .routes import health, projection
@@ -37,12 +38,31 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        logger.info("starting zeptly-semantica-api %s with %s", __version__, settings)
-        if not graph.check_ready():
-            # Not fatal: /health stays up, /ready reports 503 until FalkorDB
-            # is reachable, and connections are retried on each request.
-            logger.warning("graph store not reachable at startup")
+        logger.info(
+            "starting zeptly-semantica-api",
+            extra={
+                "event": "startup",
+                "service_version": __version__,
+                "semantica_version": version("semantica"),
+                "env": settings.env,
+                "auth_required": settings.auth_required,
+                "anonymous_allowed": settings.allow_anonymous,
+                "falkordb_host": settings.falkordb_host,
+                "falkordb_port": settings.falkordb_port,
+                "falkordb_password_set": settings.falkordb_password is not None,
+                "graph_name": settings.graph_name,
+            },
+        )
+        # Not fatal if FalkorDB is not up yet (Railway has no depends_on):
+        # /health stays up, /ready reports 503, and every request retries
+        # the connection until FalkorDB is reachable.
+        ready = graph.check_ready()
+        logger.info("initial readiness", extra={"event": "readiness", "ready": ready})
         yield
+        logger.info(
+            "shutting down",
+            extra={"event": "shutdown", "auth_failures": dict(app.state.auth_failures.counts)},
+        )
         graph.close()
 
     docs = not settings.is_production_like
@@ -57,6 +77,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.graph = graph
+    app.state.auth_failures = AuthFailureCounter()
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):  # type: ignore[no-untyped-def]

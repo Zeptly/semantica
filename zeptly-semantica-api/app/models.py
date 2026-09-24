@@ -10,6 +10,7 @@ other unlisted field are rejected with 422.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import UTC, datetime
 from typing import Annotated, List, Literal, Optional
 
@@ -17,6 +18,7 @@ from pydantic import (
     AfterValidator,
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictBool,
@@ -38,7 +40,10 @@ EDGE_TYPE_PATTERN = r"^[A-Z][A-Z0-9_]{0,63}$"
 LIFECYCLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
 PROVENANCE_REF_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/#@=\-]{0,255}$"
 
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+# Characters that make a label render deceptively or span lines: bidi
+# embeddings/overrides/isolates and Unicode line/paragraph separators.
+# (All Cc control characters, C0 and C1, are rejected by category below.)
+_DECEPTIVE_CHARS = re.compile("[\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c]")
 
 Identifier = Annotated[str, StringConstraints(strict=True, pattern=ID_PATTERN)]
 NodeType = Annotated[str, StringConstraints(strict=True, pattern=NODE_TYPE_PATTERN)]
@@ -48,8 +53,10 @@ ProvenanceRef = Annotated[str, StringConstraints(strict=True, pattern=PROVENANCE
 
 
 def _check_label(value: str) -> str:
-    if _CONTROL_CHARS.search(value):
+    if any(unicodedata.category(ch) == "Cc" for ch in value):
         raise ValueError("label must not contain control characters")
+    if _DECEPTIVE_CHARS.search(value):
+        raise ValueError("label must not contain bidi-control or line-separator characters")
     if not value.strip():
         raise ValueError("label must not be blank")
     return value
@@ -68,6 +75,23 @@ def _unique(values: Optional[List[str]]) -> Optional[List[str]]:
     return values
 
 
+def _iso_string_only(value: object) -> object:
+    # Timestamps must be ISO-8601 strings; reject numbers (epoch ambiguity).
+    if value is not None and not isinstance(value, str):
+        raise ValueError("timestamp must be an ISO-8601 string with a timezone")
+    return value
+
+
+def _to_utc(value: datetime) -> datetime:
+    try:
+        return value.astimezone(UTC)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("timestamp is out of range when converted to UTC") from exc
+
+
+Timestamp = Annotated[AwareDatetime, BeforeValidator(_iso_string_only), AfterValidator(_to_utc)]
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -81,9 +105,9 @@ class _ProjectionMetadata(_Strict):
     is_current: StrictBool = Field(
         default=True, description="Currentness flag mirrored from PostgreSQL."
     )
-    valid_from: Optional[AwareDatetime] = None
-    valid_to: Optional[AwareDatetime] = None
-    source_updated_at: Optional[AwareDatetime] = Field(
+    valid_from: Optional[Timestamp] = None
+    valid_to: Optional[Timestamp] = None
+    source_updated_at: Optional[Timestamp] = Field(
         default=None, description="Timestamp of the canonical row this projects."
     )
     source_version: Optional[StrictInt] = Field(

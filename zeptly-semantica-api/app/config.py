@@ -125,6 +125,13 @@ class Settings:
 
         host = (e.get("FALKORDB_HOST") or "localhost").strip()
         password = e.get("FALKORDB_PASSWORD") or None
+        if password is not None:
+            password = password.strip() or None
+        if env not in NON_PRODUCTION_ENVS and not password:
+            # falkordb-server runs with protected-mode off; without
+            # --requirepass anything on the private network could read or
+            # flush the graph.
+            raise ConfigError(f"FALKORDB_PASSWORD is required when SEMANTICA_ENV={env}")
         graph_name = (e.get("FALKORDB_GRAPH") or DEFAULT_GRAPH_NAME).strip()
         if not graph_name.replace("_", "").isalnum():
             raise ConfigError("FALKORDB_GRAPH may contain only letters, digits and _")
