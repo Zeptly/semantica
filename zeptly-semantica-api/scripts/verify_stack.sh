@@ -16,7 +16,7 @@
 #                                                   -> API up, ready once FalkorDB is
 # 12. wrong FalkorDB password                       -> not ready, no crash
 # 13. docker compose down + up, volume kept         -> state intact
-# 14. dual-stack bind, log hygiene
+# 14. network bind (IPv4 default), log hygiene
 #
 # Usage: scripts/verify_stack.sh [--keep]
 #   VERIFY_BUILD_CA=/path/ca.pem  pass an extra CA to the image build (TLS-intercepting proxies)
@@ -269,7 +269,7 @@ import urllib.request
 for u in ('http://127.0.0.1:8080/health', 'http://[::1]:8080/health'):
     assert urllib.request.urlopen(u, timeout=3).status == 200, u"
 else
-  check "no IPv6 in this container runtime: fell back to 0.0.0.0 and answers on IPv4" docker compose exec -T semantica-api python -c "
+  check "API bound to $BIND_HOST and answers on IPv4 (Railway healthcheck path)" docker compose exec -T semantica-api python -c "
 import urllib.request
 assert urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200"
 fi

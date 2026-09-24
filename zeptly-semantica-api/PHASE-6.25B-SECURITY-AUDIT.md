@@ -274,7 +274,7 @@ Railway reads this file only if the service's config path is set to `/zeptly-sem
 
 | # | Item | Why it is open |
 |---|---|---|
-| R1 | **The dual-stack `::` bind path has not been exercised.** | This sandbox has no IPv6. 6.25C must confirm the `bind` log shows `"host": "::"`, and, when Phase 6.5 needs it, that the private URL is reachable from another Railway service. |
+| R1 | **The dual-stack `::` bind path has not been exercised.** *Superseded in Phase 6.25C:* on Railway, `host="::"` passed to uvicorn produced a listener that the IPv4 deploy healthcheck and TCP probe could never reach. `_bind_host()` had verified dual-stack on a separate probe socket with `IPV6_V6ONLY=0`, but uvicorn's own socket inherited the runtime default. The default is now `0.0.0.0`. `SEMANTICA_BIND_HOST=::` builds an explicitly dual-stack socket and hands it to uvicorn. | This sandbox has no IPv6. 6.25C must confirm the `bind` log shows `"host": "::"`, and, when Phase 6.5 needs it, that the private URL is reachable from another Railway service. |
 | R2 | Railway-specific behaviour is unverified. | Specifically: whether a digest-pinned image reference is accepted, whether `railway.toml` is picked up from the absolute config path, `watchPatterns` semantics, and the volume mount on `/var/lib/falkordb/data`. All come from docs, not from use. |
 | R3 | `/health` as the Railway healthcheck (a specified requirement). | A deploy with a wrong FalkorDB password still passes and replaces the previous deployment. Mitigation: always check `/ready` after a deploy (guide step 14). Alternative for later: use `/ready` as the healthcheck. |
 | R4 | Single shared key, with no rotation overlap. | Rotation needs coordinated redeploys. |

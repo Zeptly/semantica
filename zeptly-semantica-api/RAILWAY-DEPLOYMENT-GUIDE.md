@@ -31,7 +31,7 @@ Every value below is marked with one of these:
 1. In the Railway dashboard, click **New Project**, then choose **Empty Project**.
 2. Open the project's **Settings** and set the **Project Name** to `zeptly-semantica` **[FIXED]**.
 3. Keep the single default environment, `production`. If your workspace creates environments for pull requests, turn that off for this project, because the graph volume must not be duplicated into ephemeral environments.
-4. Note the environment's creation date. Environments created **before 16 October 2025** have IPv6-only private networking. The service binds dual-stack `[::]`, so it works either way, and the check in step 14 confirms it.
+4. Note the environment's creation date. Environments created **before 16 October 2025** have IPv6-only private networking; only those need `SEMANTICA_BIND_HOST=::` (step 9). Newer environments are dual-stack and use the default `0.0.0.0`, and the check in step 14 confirms it.
 
 ## 2. Create the FalkorDB service
 
@@ -145,7 +145,9 @@ Optional variables. Leave them unset to use the defaults:
 | `FALKORDB_GRAPH` | `zeptly_semantica` | **[FIXED]** |
 | `FALKORDB_TIMEOUT_SECONDS` | `5` | **[FIXED]** |
 
-Do **not** set `PORT`. **[RAILWAY]** Railway injects it, and the service listens on `[::]:${PORT}`.
+Do **not** set `PORT`. **[RAILWAY]** Railway injects it, and the service listens on `0.0.0.0:${PORT}`.
+
+Only for a legacy environment created before 16 October 2025, whose private network is IPv6-only, also set `SEMANTICA_BIND_HOST` = `::` **[FIXED]**. Do not set it otherwise. Railway's deploy healthcheck connects over IPv4. With `::` the service builds a socket that is explicitly dual-stack, but plain `0.0.0.0` is the tested default.
 
 Do not add any other variables. The service reads nothing else. In particular it takes no LLM or provider keys, no database URLs and no Semantica feature flags.
 
@@ -206,7 +208,7 @@ In the `semantica-api` deployment logs, which are JSON lines, check the followin
 | Event | Expected |
 |---|---|
 | `startup` | `"semantica_version": "0.6.0"`, `"env": "production"`, `"auth_required": true`, `"anonymous_allowed": false`, `"falkordb_password_set": true`, `"falkordb_host": "falkordb.railway.internal"` |
-| `bind` | `"host": "::"`. `"0.0.0.0"` is also acceptable in environments without IPv6. |
+| `bind` | `"host": "0.0.0.0"`. In a legacy environment configured with `SEMANTICA_BIND_HOST=::`: `"host": "::"` and `"ipv6_only": false`. |
 | `readiness` | `"ready": true` |
 | `graph_connected` | present |
 

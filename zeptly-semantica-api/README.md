@@ -119,7 +119,8 @@ The response contains the anchor node, a list of `{direction, edge, neighbor}` e
 | `FALKORDB_PASSWORD` | yes in production/staging | none | Must match FalkorDB's `--requirepass`. The service refuses to start without it in production or staging, because `falkordb-server` runs with protected-mode off. |
 | `FALKORDB_GRAPH` | no | `zeptly_semantica` | Graph name. Letters, digits and `_` only. |
 | `FALKORDB_TIMEOUT_SECONDS` | no | `5` | Socket connect and read timeout for graph calls. |
-| `PORT` | no | `8080` | Railway injects this value. The server binds `[::]:${PORT}` (dual-stack IPv6 + IPv4, as Railway private networking needs) and falls back to `0.0.0.0` when IPv6 is unavailable. |
+| `PORT` | no | `8080` | Railway injects this value. The server binds `0.0.0.0:${PORT}`. |
+| `SEMANTICA_BIND_HOST` | no | `0.0.0.0` | Set to `::` only for a legacy Railway environment (created before 16 Oct 2025) whose private network is IPv6-only. The service then creates an explicitly dual-stack socket (`IPV6_V6ONLY=0`), so it still answers Railway's IPv4 healthcheck, and exits with code 2 if IPv6 is unavailable. Only `0.0.0.0` and `::` are accepted. |
 
 If configuration is invalid or unsafe, the process logs the reason and exits with code 2.
 

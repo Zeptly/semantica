@@ -68,6 +68,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8080'), timeout=3)"]
 
-# Deterministic start: validates config, then serves on [::]:${PORT}
-# (dual-stack; falls back to 0.0.0.0 if IPv6 is unavailable).
+# Deterministic start: validates config, then serves on 0.0.0.0:${PORT}
+# (SEMANTICA_BIND_HOST=:: selects an explicit dual-stack socket instead).
 ENTRYPOINT ["python", "-m", "app"]

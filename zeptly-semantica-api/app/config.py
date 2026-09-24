@@ -17,6 +17,11 @@ NON_PRODUCTION_ENVS = ("development", "test")
 MIN_PRODUCTION_KEY_LENGTH = 32
 DEFAULT_PORT = 8080
 DEFAULT_GRAPH_NAME = "zeptly_semantica"
+# "0.0.0.0": IPv4 (default; Railway environments created on/after 2025-10-16
+# have dual-stack private networking, and healthchecks arrive over IPv4).
+# "::": explicit dual-stack socket (IPV6_V6ONLY=0) for legacy IPv6-only
+# Railway private networking.
+BIND_HOSTS = ("0.0.0.0", "::")  # noqa: S104 - container ingress
 
 
 class ConfigError(RuntimeError):
@@ -69,6 +74,7 @@ class Settings:
     graph_name: str
     graph_timeout_seconds: float
     port: int
+    bind_host: str = "0.0.0.0"  # noqa: S104 - container ingress
 
     @property
     def is_production_like(self) -> bool:
@@ -84,7 +90,8 @@ class Settings:
             f"allow_anonymous={self.allow_anonymous}, falkordb_host={self.falkordb_host!r}, "
             f"falkordb_port={self.falkordb_port}, "
             f"falkordb_password={'<set>' if self.falkordb_password else None}, "
-            f"graph_name={self.graph_name!r}, port={self.port})"
+            f"graph_name={self.graph_name!r}, port={self.port}, "
+            f"bind_host={self.bind_host!r})"
         )
 
     __str__ = __repr__
@@ -136,6 +143,10 @@ class Settings:
         if not graph_name.replace("_", "").isalnum():
             raise ConfigError("FALKORDB_GRAPH may contain only letters, digits and _")
 
+        bind_host = (e.get("SEMANTICA_BIND_HOST") or BIND_HOSTS[0]).strip()
+        if bind_host not in BIND_HOSTS:
+            raise ConfigError("SEMANTICA_BIND_HOST must be 0.0.0.0 or ::")
+
         return cls(
             env=env,
             api_key=api_key,
@@ -148,4 +159,5 @@ class Settings:
                 "FALKORDB_TIMEOUT_SECONDS", e.get("FALKORDB_TIMEOUT_SECONDS"), 5.0
             ),
             port=_parse_int("PORT", e.get("PORT"), DEFAULT_PORT, 1, 65535),
+            bind_host=bind_host,
         )

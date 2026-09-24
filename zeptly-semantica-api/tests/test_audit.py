@@ -12,7 +12,6 @@ import uuid
 import pytest
 
 from app import graph as graph_module
-from app.__main__ import _bind_host
 from app.graph import scoped_key
 from app.logging_setup import JsonFormatter
 from tests.conftest import API_KEY, edge_body, node_body
@@ -402,41 +401,6 @@ def test_query_limits_enforced(client, ws):
 
 
 # -- bind address ------------------------------------------------------------------
-
-
-class _FakeSocket:
-    fail = False
-
-    def __init__(self, *a, **k):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def setsockopt(self, *a):
-        pass
-
-    def bind(self, addr):
-        if _FakeSocket.fail:
-            raise OSError(97, "Address family not supported by protocol")
-
-
-@pytest.mark.parametrize("ipv6_works,expected", [(True, "::"), (False, "0.0.0.0")])  # noqa: S104
-def test_bind_host_selection_logic(monkeypatch, ipv6_works, expected):
-    """Selection logic only (this sandbox has no IPv6 to bind for real)."""
-    import app.__main__ as entry
-
-    monkeypatch.setattr(entry.socket, "has_ipv6", True)
-    monkeypatch.setattr(entry.socket, "socket", _FakeSocket)
-    _FakeSocket.fail = not ipv6_works
-    assert entry._bind_host() == expected
-
-
-def test_bind_host_is_dual_stack_or_ipv4_fallback():
-    assert _bind_host() in ("::", "0.0.0.0")  # noqa: S104
 
 
 def test_graph_module_labels_are_constants():
