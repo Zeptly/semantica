@@ -25,6 +25,8 @@ BASE="${BASE%/}"
 A="phase625-workspace-a"
 B="phase625-workspace-b"
 FAILS=0
+STATUS=""
+BODY=""
 
 pass() { printf 'PASS  %s\n' "$*"; }
 failm() { printf 'FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
@@ -37,8 +39,20 @@ req() {
   STATUS="$(printf 'X-API-Key: %s\n' "$SEMANTICA_API_KEY" | curl "${args[@]}")" || STATUS="curl-error"
   BODY="$(cat /tmp/p625_body 2>/dev/null)"; rm -f /tmp/p625_body
 }
-# anon METHOD PATH [extra curl args...] -> status only (no key)
-anon() { local m="$1" p="$2"; shift 2; curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -X "$m" "$@" "$BASE$p" || echo curl-error; }
+# anon METHOD PATH [extra curl args...] -> status only (no key); clears BODY
+anon() { BODY=""; local m="$1" p="$2"; shift 2; curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -X "$m" "$@" "$BASE$p" || echo curl-error; }
+
+# Refuse to run when BASE cannot be reached at all (DNS, proxy, firewall):
+# a network block must never be recorded as a test result.
+preflight() {
+  local code
+  code="$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "$BASE/health" 2>/dev/null)" || code="000"
+  if [[ "$code" == "000" ]]; then
+    echo "UNREACHABLE  cannot connect to $BASE from this machine (network/proxy/DNS)."
+    echo "             No test was run and nothing was recorded. Run from a machine with direct internet access."
+    exit 3
+  fi
+}
 want() {  # want EXPECTED DESCRIPTION
   if [[ "$STATUS" == "$1" ]]; then pass "$2 -> HTTP $STATUS"; else failm "$2 -> expected $1, got $STATUS: ${BODY:0:300}"; fi
 }
@@ -66,7 +80,7 @@ stage_auth() {
   STATUS="$(anon GET "$p")";                            want 401 "no key"
   STATUS="$(anon GET "$p" -H 'X-API-Key: wrong-key')";  want 401 "invalid key"
   STATUS="$(anon GET "$p" -H 'X-API-Key;')";            want 401 "empty key"
-  STATUS="$(printf 'X-API-Key: %s\nX-API-Key: wrong\n' "$SEMANTICA_API_KEY" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- "$BASE$p")"
+  BODY=""; STATUS="$(printf 'X-API-Key: %s\nX-API-Key: wrong\n' "$SEMANTICA_API_KEY" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- "$BASE$p")"
   want 401 "duplicate key headers (valid + wrong)"
   STATUS="$(printf 'Authorization: Bearer %s\n' "$SEMANTICA_API_KEY" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- "$BASE$p")"
   want 401 "Bearer header instead of X-API-Key"
@@ -139,6 +153,10 @@ stage_verify_clean() {
   for e in phase625-a1-a2 phase625-cross; do req DELETE "/v1/workspaces/$A/edges/$e"; want 404 "A edge $e absent"; done
   req DELETE "/v1/workspaces/$B/edges/phase625-b1-b2"; want 404 "B edge phase625-b1-b2 absent"
 }
+
+case "${1:-}" in
+  health|auth|fixtures|query|check|cleanup|verify-clean) preflight ;;
+esac
 
 case "${1:-}" in
   health) stage_health ;;
