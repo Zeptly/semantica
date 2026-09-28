@@ -1,0 +1,7 @@
+# Runtime dependencies of zeptly-semantica-api, excluding semantica itself.
+# semantica==0.6.0 is appended to requirements.lock by scripts/lock.sh and
+# installed with --no-deps (see README "Version pinning").
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5
+falkordb==1.7.1
